@@ -1,0 +1,38 @@
+name: Codebase Visualizer
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  refresh-dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mint OIDC token
+        id: oidc
+        run: |
+          response="$(curl -sSL \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=codebase-visualizer")"
+          echo "token=$(printf '%s' "$response" | jq -r '.value')" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger ingest
+        env:
+          APP_URL: ${{ secrets.CODEBASE_VISUALIZER_APP_URL }}
+          OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
+        run: |
+          curl -sSL -X POST "$APP_URL/api/actions/ingest" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $OIDC_TOKEN" \
+            -d '{
+              "repository": "'"${{ github.repository }}"'",
+              "branch": "'"${{ github.ref_name }}"'",
+              "sha": "'"${{ github.sha }}"'",
+              "workflowRunId": "'"${{ github.run_id }}"'"
+            }'

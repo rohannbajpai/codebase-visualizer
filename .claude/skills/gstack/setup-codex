@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Codex-friendly gstack setup: build browse without Claude skill symlinks.
+set -euo pipefail
+
+GSTACK_DIR="$(cd "$(dirname "$0")" && pwd)"
+BROWSE_BIN="$GSTACK_DIR/browse/dist/browse"
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Missing required command: $1" >&2
+    exit 1
+  fi
+}
+
+ensure_playwright_browser() {
+  (
+    cd "$GSTACK_DIR"
+    bun --eval 'import { chromium } from "playwright"; const browser = await chromium.launch(); await browser.close();'
+  ) >/dev/null 2>&1
+}
+
+needs_build=0
+if [ ! -x "$BROWSE_BIN" ]; then
+  needs_build=1
+elif [ -n "$(find "$GSTACK_DIR/browse/src" -type f -newer "$BROWSE_BIN" -print -quit 2>/dev/null)" ]; then
+  needs_build=1
+elif [ "$GSTACK_DIR/package.json" -nt "$BROWSE_BIN" ]; then
+  needs_build=1
+elif [ -f "$GSTACK_DIR/bun.lock" ] && [ "$GSTACK_DIR/bun.lock" -nt "$BROWSE_BIN" ]; then
+  needs_build=1
+fi
+
+if [ "$needs_build" -eq 1 ]; then
+  require_cmd bun
+  echo "Building gstack browse binary..."
+  (
+    cd "$GSTACK_DIR"
+    bun install
+    bun run build
+  )
+  if [ ! -f "$GSTACK_DIR/browse/dist/.version" ]; then
+    git -C "$GSTACK_DIR" rev-parse HEAD > "$GSTACK_DIR/browse/dist/.version" 2>/dev/null || true
+  fi
+fi
+
+if [ ! -x "$BROWSE_BIN" ]; then
+  echo "gstack setup failed: browse binary missing at $BROWSE_BIN" >&2
+  exit 1
+fi
+
+require_cmd bun
+if ! ensure_playwright_browser; then
+  echo "Installing Playwright Chromium..."
+  (
+    cd "$GSTACK_DIR"
+    bunx playwright install chromium
+  )
+fi
+
+if ! ensure_playwright_browser; then
+  echo "gstack setup failed: Playwright Chromium could not be launched" >&2
+  exit 1
+fi
+
+mkdir -p "$HOME/.gstack/projects"
+
+echo "gstack ready for Codex."
+echo "  browse: $BROWSE_BIN"
+echo "  note: skipped Claude Code skill symlinks; Codex uses AGENTS.md instead."
